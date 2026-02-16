@@ -1,28 +1,21 @@
-# استفاده از نسخه سبک Node.js
-FROM node:18-slim
+FROM node:16-bullseye-slim
 
-# نصب Chromium و وابستگی‌های لازم برای اجرا
-RUN apt-get update \
-    && apt-get install -y wget gnupg \
-    && apt-get install -y chromium \
-    && apt-get install -y fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# تنظیم متغیرهای محیطی برای اینکه Puppeteer بداند کروم کجاست
+# تنظیم متغیرهای محیطی برای عملکرد صحیح
+ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# تنظیم دایرکتوری کاری
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# کپی کردن فایل‌ها
+# کپی و نصب وابستگی‌ها
 COPY package*.json ./
-RUN npm install
+RUN npm install --only=production
 
+# کپی بقیه فایل‌ها
 COPY . .
 
-# دسترسی پورت
+# پورت
+ENV PORT=3000
 EXPOSE 3000
 
-# اجرای برنامه
-CMD [ "node", "index.js" ]
+# اجرا
+CMD ["node", "index.js"]
