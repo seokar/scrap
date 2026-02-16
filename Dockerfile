@@ -1,26 +1,28 @@
-FROM ghcr.io/puppeteer/puppeteer:22.4.1
+# استفاده از نسخه سبک Node.js
+FROM node:18-slim
 
-USER root
+# نصب Chromium و وابستگی‌های لازم برای اجرا
+RUN apt-get update \
+    && apt-get install -y wget gnupg \
+    && apt-get install -y chromium \
+    && apt-get install -y fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    PORT=3000
+# تنظیم متغیرهای محیطی برای اینکه Puppeteer بداند کروم کجاست
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# تنظیم دایرکتوری کاری
 WORKDIR /usr/src/app
 
+# کپی کردن فایل‌ها
 COPY package*.json ./
-
-# نصب پکیج‌ها
 RUN npm install
 
 COPY . .
 
-# دسترسی‌های لازم را به یوزر بدهیم
-RUN chown -R pptruser:pptruser /usr/src/app
-
-USER pptruser
-
-# اعلام پورت به Railway
+# دسترسی پورت
 EXPOSE 3000
 
+# اجرای برنامه
 CMD [ "node", "index.js" ]
