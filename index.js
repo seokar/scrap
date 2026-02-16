@@ -1,6 +1,4 @@
 const express = require('express');
-const chromium = require('@sparticuz/chrome-aws-lambda');
-// از puppeteer-extra به همراه puppeteer-core استفاده می‌کنیم
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
@@ -20,42 +18,57 @@ app.get('/', async (req, res) => {
 
     let browser = null;
     try {
-        // --- تغییر کلیدی اینجاست ---
-        // از کروم بهینه شده استفاده می‌کنیم
         browser = await puppeteer.launch({
-            args: chromium.args,
-            defaultViewport: chromium.defaultViewport,
-            executablePath: await chromium.executablePath,
-            headless: chromium.headless,
-            ignoreHTTPSErrors: true,
+            // استفاده از مسیری که در Dockerfile تعریف کردیم
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+            headless: 'new',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // حیاتی برای داکر: جلوگیری از کرش مموری
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process'
+            ]
         });
 
         const page = await browser.newPage();
         
-        // افزایش تایم‌اوت
-        page.setDefaultNavigationTimeout(90000); 
+        // مسدود کردن منابع غیر ضروری برای افزایش سرعت و کاهش رم
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
 
-        await page.setViewport({ width: 1920, height: 1080 });
+        // تنظیم Viewport
+        await page.setViewport({ width: 1280, height: 720 });
 
+        // رفتن به آدرس
         await page.goto(targetUrl, { 
             waitUntil: 'domcontentloaded',
-            timeout: 90000 
+            timeout: 60000 
         });
 
         const content = await page.content();
-        
         res.send(content);
 
     } catch (error) {
-        console.error("Error processing request:", error);
-        res.status(500).json({ error: error.message });
+        console.error("Scraping Error:", error);
+        res.status(500).send(`Error: ${error.message}`);
     } finally {
-        if (browser !== null) {
+        if (browser) {
             await browser.close();
         }
     }
 });
 
+// گوش دادن روی تمام پورت‌ها (0.0.0.0) - حیاتی برای Railway
 app.listen(port, '0.0.0.0', () => {
-    console.log(`Proxy listening on http://0.0.0.0:${port}`);
+    console.log(`Server running on port ${port}`);
 });
