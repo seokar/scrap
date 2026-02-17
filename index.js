@@ -3,81 +3,77 @@ const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
-// فعال‌سازی پلاگین مخفی‌سازی
+// افزودن پلاگین مخفی‌سازی
 puppeteer.use(StealthPlugin());
 
 const app = express();
 const port = process.env.PORT || 3000;
 
+// تابع کمکی برای پیدا کردن مسیر کروم به هر قیمتی!
+async function getChromiumPath() {
+    // حالت اول: اگر تابع بود اجراش کن
+    if (typeof chromium.executablePath === 'function') {
+        return await chromium.executablePath();
+    } 
+    // حالت دوم: اگر متن بود خودش رو برگردون
+    return chromium.executablePath;
+}
+
 app.get('/health', (req, res) => {
-    res.send('OK');
+    res.send('OK - Ready');
 });
 
 app.get('/', async (req, res) => {
     const targetUrl = req.query.url;
-    
-    // اگر کاربر url نداد، راهنما را نشان بده
     if (!targetUrl) {
-        return res.send('Please provide a url. Example: /?url=https://torob.com');
+        return res.status(400).send('URL required. Usage: /?url=https://site.com');
     }
 
     let browser = null;
     try {
-        console.log(`Starting Stealth browser for: ${targetUrl}`);
-
-        // --- اصلاح مهم برای رفع ارور executablePath ---
-        // بررسی می‌کنیم که executablePath تابع است یا متن، تا ارور ندهد
-        let execPath;
-        if (typeof chromium.executablePath === 'function') {
-            execPath = await chromium.executablePath();
-        } else {
-            execPath = chromium.executablePath;
-        }
+        // دریافت مسیر اجرایی با تابع هوشمند
+        const execPath = await getChromiumPath();
         
-        // اگر مسیری پیدا نشد (محض اطمینان برای دیباگ)
-        if (!execPath) {
-             throw new Error('Chromium executablePath is null or undefined.');
-        }
-
-        console.log(`Using executable path: ${execPath}`);
-        // ---------------------------------------------
+        console.log(`Launching Browser... Path: ${execPath}`);
 
         browser = await puppeteer.launch({
             args: [
                 ...chromium.args,
                 '--disable-web-security',
                 '--no-sandbox',
+                '--disable-setuid-sandbox'
             ],
             defaultViewport: chromium.defaultViewport,
-            executablePath: execPath, // مسیر اصلاح شده را اینجا می‌دهیم
+            executablePath: execPath, // مسیر محاسبه شده
             headless: chromium.headless,
             ignoreHTTPSErrors: true,
         });
 
         const page = await browser.newPage();
 
-        // بلاک کردن عکس و فونت برای سرعت بیشتر
+        // حذف منابع اضافه برای سرعت
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+            const resourceType = req.resourceType();
+            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
                 req.abort();
             } else {
                 req.continue();
             }
         });
 
-        // رفتن به سایت هدف
+        // رفتن به سایت
         await page.goto(targetUrl, { 
             waitUntil: 'domcontentloaded', 
-            timeout: 45000 
+            timeout: 60000 
         });
 
         const content = await page.content();
         res.send(content);
 
     } catch (error) {
-        console.error('Scraping Error:', error);
-        res.status(500).send(`Error: ${error.message}\nPath issue?`);
+        console.error('Error Details:', error);
+        res.status(500).send(`Server Error: ${error.message}`);
     } finally {
         if (browser) {
             await browser.close();
@@ -86,5 +82,5 @@ app.get('/', async (req, res) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-    console.log(`Server listening on port ${port}`);
+    console.log(`Server running on port ${port}`);
 });
