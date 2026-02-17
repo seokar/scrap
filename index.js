@@ -8,6 +8,9 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const port = process.env.PORT || 3000;
 
+// تابع تاخیر (Wait)
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function getChromiumPath() {
     if (typeof chromium.executablePath === 'function') {
         return await chromium.executablePath();
@@ -27,12 +30,14 @@ app.get('/', async (req, res) => {
             args: [
                 ...chromium.args,
                 '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process', // کاهش مصرف رم
+                '--disable-features=IsolateOrigins,site-per-process',
                 '--disable-site-isolation-trials',
-                '--disable-dev-shm-usage', // حیاتی برای داکر
+                '--disable-dev-shm-usage',
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-gpu' // گرافیک نداریم، پس خاموش
+                '--disable-gpu',
+                '--no-zygote', // کاهش مصرف رم با جلوگیری از پروسه‌های اضافه
+                '--single-process' // ریسکی اما برای رم کم عالی است
             ],
             defaultViewport: chromium.defaultViewport,
             executablePath: execPath,
@@ -42,43 +47,56 @@ app.get('/', async (req, res) => {
 
         const page = await browser.newPage();
 
-        // 1. مسدودسازی هوشمندانه منابع برای سرعت
+        // جلوگیری از لود منابع سنگین
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             const resourceType = req.resourceType();
-            // لیست سیاه منابع غیرضروری
-            const blockedTypes = ['image', 'stylesheet', 'font', 'media', 'other'];
-            if (blockedTypes.includes(resourceType)) {
+            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
                 req.abort();
             } else {
                 req.continue();
             }
         });
 
-        // 2. تلاش برای باز کردن سایت با مدیریت تایم‌اوت
+        console.log(`Navigating to: ${targetUrl}`);
+
         try {
-            console.log(`Navigating to: ${targetUrl}`);
+            // تلاش برای لود صفحه با تایم‌اوت ۲۰ ثانیه
             await page.goto(targetUrl, {
-                waitUntil: 'domcontentloaded', // صبر تا لود شدن ساختار HTML
-                timeout: 25000 // کاهش تایم‌اوت به 25 ثانیه (اگر نشد ولش کن)
+                waitUntil: 'domcontentloaded',
+                timeout: 20000 
             });
         } catch (e) {
-            console.log("Timeout reached, but checking if content exists...");
-            // اگر تایم‌اوت شد، برنامه را متوقف نمی‌کنیم و ادامه می‌دهیم
-            // چون احتمالا محتوا لود شده است
+            console.log("Navigation timeout. Stabilizing...");
+            // اگر تایم‌اوت شد، ۳ ثانیه صبر می‌کنیم تا رفرش‌ها یا ریدایرکت‌های احتمالی تمام شوند
+            await wait(3000);
         }
 
-        // دریافت محتوا حتی اگر تایم‌اوت شده باشد
-        const content = await page.content();
+        // تلاش برای خواندن محتوا با مکانیزم تلاش مجدد (Retry)
+        let content = '';
+        try {
+            content = await page.content();
+        } catch (contentError) {
+            console.log("Context lost, retrying one last time...");
+            // اگر ارور Context Destroyed داد، یعنی صفحه رفرش شده. ۲ ثانیه صبر و تلاش مجدد
+            await wait(2000);
+            try {
+                content = await page.content();
+            } catch (finalError) {
+                 // اگر باز هم نشد، هر چه هست را برگردان
+                content = '<html><body><h1>Error: Page is unstable/redirecting loop.</h1></body></html>';
+            }
+        }
+
         res.send(content);
 
     } catch (error) {
-        console.error('Critical Error:', error);
+        console.error('Critical Server Error:', error);
         res.status(500).send(`Server Error: ${error.message}`);
     } finally {
         if (browser) {
-            // بستن مرورگر برای آزاد شدن رم
-            await browser.close(); 
+            // بستن با کمی تاخیر برای اطمینان از پاکسازی
+            setTimeout(() => browser.close().catch(() => {}), 1000);
         }
     }
 });
