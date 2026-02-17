@@ -1,15 +1,10 @@
 const express = require('express');
 const chromium = require('@sparticuz/chromium');
-
-// --- تغییر حیاتی اینجاست ---
-// به جای puppeteer-core، ما puppeteer-extra را صدا می‌زنیم
-// تا قابلیت .use() فعال شود.
-const puppeteer = require('puppeteer-extra'); 
-
-// پلاگین مخفی‌سازی (هدف اصلی ما)
+const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// فعال‌سازی پلاگین مخفی‌سازی
 puppeteer.use(StealthPlugin());
-// ---------------------------
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,32 +15,48 @@ app.get('/health', (req, res) => {
 
 app.get('/', async (req, res) => {
     const targetUrl = req.query.url;
-    if (!targetUrl) return res.status(400).send('URL required');
+    
+    // اگر کاربر url نداد، راهنما را نشان بده
+    if (!targetUrl) {
+        return res.send('Please provide a url. Example: /?url=https://torob.com');
+    }
 
     let browser = null;
     try {
-        console.log(`Launching Stealth browser for: ${targetUrl}`);
+        console.log(`Starting Stealth browser for: ${targetUrl}`);
+
+        // --- اصلاح مهم برای رفع ارور executablePath ---
+        // بررسی می‌کنیم که executablePath تابع است یا متن، تا ارور ندهد
+        let execPath;
+        if (typeof chromium.executablePath === 'function') {
+            execPath = await chromium.executablePath();
+        } else {
+            execPath = chromium.executablePath;
+        }
         
-        // تنظیمات گرافیکی برای دور زدن تشخیص ربات
-        // این بخش را تغییر ندادم چون برای Railway عالی بود
+        // اگر مسیری پیدا نشد (محض اطمینان برای دیباگ)
+        if (!execPath) {
+             throw new Error('Chromium executablePath is null or undefined.');
+        }
+
+        console.log(`Using executable path: ${execPath}`);
+        // ---------------------------------------------
+
         browser = await puppeteer.launch({
             args: [
-                ...chromium.args, 
-                '--disable-web-security', 
-                '--disable-features=IsolateOrigins,site-per-process' // کمک به لود شدن فریم‌ها
+                ...chromium.args,
+                '--disable-web-security',
+                '--no-sandbox',
             ],
             defaultViewport: chromium.defaultViewport,
-            executablePath: await chromium.executablePath(),
+            executablePath: execPath, // مسیر اصلاح شده را اینجا می‌دهیم
             headless: chromium.headless,
             ignoreHTTPSErrors: true,
         });
 
         const page = await browser.newPage();
-        
-        // تنظیم User-Agent تصادفی یا ثابت (اختیاری ولی توصیه شده برای طبیعی‌تر شدن)
-        // فعلاً می‌گذاریم خود StealthPlugin کارش را بکند
 
-        // بلاک کردن منابع برای سرعت (همان تنظیمات قبلی شما)
+        // بلاک کردن عکس و فونت برای سرعت بیشتر
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
@@ -55,10 +66,10 @@ app.get('/', async (req, res) => {
             }
         });
 
-        // تایم‌اوت را کمی بالا می‌بریم که اگر سایت سنگین بود کرش نکند
+        // رفتن به سایت هدف
         await page.goto(targetUrl, { 
             waitUntil: 'domcontentloaded', 
-            timeout: 40000 
+            timeout: 45000 
         });
 
         const content = await page.content();
@@ -66,7 +77,7 @@ app.get('/', async (req, res) => {
 
     } catch (error) {
         console.error('Scraping Error:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).send(`Error: ${error.message}\nPath issue?`);
     } finally {
         if (browser) {
             await browser.close();
