@@ -1,21 +1,38 @@
-FROM node:16-bullseye-slim
+# استفاده از نسخه دبیان (Debian) که برای نصب پکیج‌ها پایدارتر است
+FROM node:18-slim
 
-# تنظیم متغیرهای محیطی برای عملکرد صحیح
-ENV NODE_ENV=production
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# این بخش حیاتی است: نصب دستی کتابخانه‌هایی که کروم نیاز دارد و در لینوکس خام نیستند
+RUN apt-get update && apt-get install -y \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# کپی و نصب وابستگی‌ها
+# کپی کردن فایل‌های پروژه
 COPY package*.json ./
-RUN npm install --only=production
+
+# نصب پکیج‌های نود
+RUN npm install
 
 # کپی بقیه فایل‌ها
 COPY . .
 
-# پورت
+# تنظیم متغیرهای محیطی
 ENV PORT=3000
-EXPOSE 3000
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/app/node_modules/@sparticuz/chromium/bin
 
-# اجرا
+# اجرای برنامه
 CMD ["node", "index.js"]
