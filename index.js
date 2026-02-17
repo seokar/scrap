@@ -36,7 +36,7 @@ app.get('/', async (req, res) => {
                 '--disable-setuid-sandbox',
                 '--disable-gpu',
                 '--no-zygote',
-                '--window-size=1920,1080', // سایز پنجره استاندارد
+                '--window-size=1920,1080',
             ],
             defaultViewport: chromium.defaultViewport,
             executablePath: execPath,
@@ -44,17 +44,16 @@ app.get('/', async (req, res) => {
             ignoreHTTPSErrors: true,
         });
 
-        // دریافت اولین تب باز شده (به جای ساخت تب جدید برای صرفه جویی در رم)
-        let pages = await browser.pages();
-        let page = pages[0];
+        // دریافت اولین تب
+        let initialPage = (await browser.pages())[0];
 
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
+        // جعل هویت
+        await initialPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
 
-        // مسدودسازی منابع سنگین
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
+        // مسدودسازی منابع برای سرعت و جلوگیری از کرش
+        await initialPage.setRequestInterception(true);
+        initialPage.on('request', (req) => {
             const resourceType = req.resourceType();
-            // استایل شیت را هم می‌بندیم تا سرعت بالا برود و رم کم نیاید
             if (['image', 'media', 'font', 'stylesheet'].includes(resourceType)) {
                 req.abort();
             } else {
@@ -65,44 +64,54 @@ app.get('/', async (req, res) => {
         console.log(`Navigating to: ${targetUrl}`);
 
         try {
-            // تلاش برای رفتن به صفحه
-            await page.goto(targetUrl, {
+            // تلاش برای رفتن به صفحه (اگر خطا داد مهم نیست)
+            await initialPage.goto(targetUrl, {
                 waitUntil: 'domcontentloaded',
-                timeout: 30000 
+                timeout: 25000 
             });
         } catch (e) {
-            // مدیریت خطای معروف Detached Frame
-            if (e.message.includes('detached') || e.message.includes('Target closed')) {
-                console.log("Redirect detected or Frame detached. Continuing...");
-            } else {
-                console.log("Navigation error (non-fatal):", e.message);
+            console.log("Navigation interrupted (likely redirect/detached). Continuing...");
+        }
+
+        // صبر حیاتی برای تکمیل ریدایرکت‌ها
+        console.log("Waiting for page to settle...");
+        await wait(4000);
+
+        // *** بخش اصلی اصلاح شده ***
+        // دیگر از initialPage استفاده نمی‌کنیم چون ممکن است مرده باشد.
+        // لیست تمام صفحات فعلی مرورگر را می‌گیریم.
+        const allPages = await browser.pages();
+        let content = null;
+        let success = false;
+
+        console.log(`Checking ${allPages.length} active tabs...`);
+
+        // تک تک تب‌ها را چک می‌کنیم تا ببینیم کدام یک زنده است و محتوا دارد
+        for (const p of allPages) {
+            try {
+                const c = await p.content();
+                if (c && c.length > 500) { // اگر محتوا معتبر بود
+                    content = c;
+                    success = true;
+                    break; // صفحه درست را پیدا کردیم!
+                }
+            } catch (err) {
+                console.log("Found a detached/dead frame, skipping...");
             }
         }
 
-        // صبر اجباری برای لود شدن محتوای جاوااسکریپتی یا تکمیل ریدایرکت
-        console.log("Waiting for content to settle...");
-        await wait(4000);
-
-        // تلاش برای پیدا کردن صفحه زنده
-        // اگر ریدایرکت شده باشد، ممکن است آبجکت page قبلی مرده باشد
-        // پس دوباره لیست صفحات را می‌گیریم
-        pages = await browser.pages();
-        page = pages[pages.length - 1]; // آخرین تب فعال را انتخاب می‌کنیم
-
-        if (!page) {
-            throw new Error("No active pages found after navigation.");
+        if (success && content) {
+            res.send(content);
+        } else {
+            throw new Error("No active page content could be retrieved.");
         }
-
-        const content = await page.content();
-        res.send(content);
 
     } catch (error) {
         console.error('Final Error:', error);
         res.status(500).send(`Server Error: ${error.message}`);
     } finally {
         if (browser) {
-            // بستن مرورگر
-            await browser.close().catch(() => console.log("Error closing browser"));
+            await browser.close().catch(() => {});
         }
     }
 });
